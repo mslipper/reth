@@ -1,16 +1,20 @@
 //! Geth trace builder
 
-use crate::tracing::{
-    types::{CallTraceNode, CallTraceStepStackItem},
-    TracingInspectorConfig,
-};
+use std::collections::{BTreeMap, HashMap, VecDeque};
+
+use revm::{db::DatabaseRef, primitives::ResultAndState};
+use revm::primitives::KECCAK_EMPTY;
+
 use reth_primitives::{Address, Bytes, H256, U256};
 use reth_rpc_types::trace::geth::{
-    AccountState, CallConfig, CallFrame, DefaultFrame, DiffMode, GethDefaultTracingOptions,
-    PreStateConfig, PreStateFrame, PreStateMode, StructLog,
+    AccountState, CallConfig, CallFrame, ChangeType, DefaultFrame, DiffMode,
+    GethDefaultTracingOptions, PreStateConfig, PreStateFrame, PreStateMode, StructLog,
 };
-use revm::{db::DatabaseRef, primitives::ResultAndState};
-use std::collections::{BTreeMap, HashMap, VecDeque};
+
+use crate::tracing::{
+    TracingInspectorConfig,
+    types::{CallTraceNode, CallTraceStepStackItem},
+};
 
 /// A type for creating geth style traces
 #[derive(Clone, Debug)]
@@ -186,9 +190,9 @@ impl GethTraceBuilder {
         DB: DatabaseRef,
     {
         let account_diffs: Vec<_> =
-            state.into_iter().map(|(addr, acc)| (*addr, &acc.info)).collect();
-
-        if !prestate_config.is_diff_mode() {
+            state.into_iter().map(|(addr, acc)| (*addr, acc)).collect();
+        let is_diff = prestate_config.is_diff_mode();
+        if !is_diff {
             let mut prestate = PreStateMode::default();
             for (addr, _) in account_diffs {
                 let db_acc = db.basic(addr)?.unwrap_or_default();
@@ -196,36 +200,78 @@ impl GethTraceBuilder {
                     addr,
                     AccountState {
                         balance: Some(db_acc.balance),
-                        nonce: Some(U256::from(db_acc.nonce)),
+                        nonce: Some(db_acc.nonce),
                         code: db_acc.code.as_ref().map(|code| Bytes::from(code.original_bytes())),
                         storage: None,
+                        change_type: ChangeType::Modify,
                     },
                 );
             }
-            self.update_storage_from_trace(&mut prestate.0, false);
+            self.update_storage_from_trace(&mut prestate.0, false, false);
             Ok(PreStateFrame::Default(prestate))
         } else {
             let mut state_diff = DiffMode::default();
             for (addr, changed_acc) in account_diffs {
                 let db_acc = db.basic(addr)?.unwrap_or_default();
+                let db_code = db_acc.code.as_ref();
+                let db_code_hash = db_acc.code_hash;
+
+                // Geth always includes the contract code in the prestate. However,
+                // the code hash will be KECCAK_EMPTY if the account is an EOA. Therefore
+                // we need to filter it out
+                let pre_code = match db_code {
+                    Some(code) => Some(Bytes::from(code.original_bytes())),
+                    None => {
+                        if db_code_hash == KECCAK_EMPTY {
+                            None
+                        } else {
+                            Some(Bytes::from(db.code_by_hash(db_code_hash)?.original_bytes()))
+                        }
+                    }
+                };
+
                 let pre_state = AccountState {
                     balance: Some(db_acc.balance),
-                    nonce: Some(U256::from(db_acc.nonce)),
-                    code: db_acc.code.as_ref().map(|code| Bytes::from(code.original_bytes())),
+                    nonce: Some(db_acc.nonce),
+                    code: pre_code,
                     storage: None,
+                    change_type: if db_acc.is_empty() {
+                        ChangeType::Create
+                    } else {
+                        ChangeType::Modify
+                    },
                 };
+
+                // Contract code can come back as a zero-length byte array. This shouldn't
+                // show up in the state diff, so we filter it out here.
+                let post_code = match changed_acc.info.code {
+                    Some(ref code) => if code.len() > 0 {
+                        Some(Bytes::from(code.original_bytes()))
+                    } else {
+                        None
+                    },
+                    None => None,
+                };
+
                 let post_state = AccountState {
-                    balance: Some(changed_acc.balance),
-                    nonce: Some(U256::from(changed_acc.nonce)),
-                    code: changed_acc.code.as_ref().map(|code| Bytes::from(code.original_bytes())),
+                    balance: Some(changed_acc.info.balance),
+                    nonce: Some(changed_acc.info.nonce),
+                    code: post_code,
                     storage: None,
+                    change_type: if changed_acc.is_destroyed {
+                        ChangeType::Destroy
+                    } else {
+                        ChangeType::Modify
+                    },
                 };
-                state_diff.pre.insert(addr, pre_state);
+
+
                 state_diff.post.insert(addr, post_state);
+                state_diff.pre.insert(addr, pre_state);
             }
-            self.update_storage_from_trace(&mut state_diff.pre, false);
-            self.update_storage_from_trace(&mut state_diff.post, true);
-            Ok(PreStateFrame::Diff(state_diff))
+            self.update_storage_from_trace(&mut state_diff.pre, false, is_diff);
+            self.update_storage_from_trace(&mut state_diff.post, true, is_diff);
+            Ok(PreStateFrame::Diff(self.diff_traces(&state_diff.pre, &state_diff.post)))
         }
     }
 
@@ -233,9 +279,79 @@ impl GethTraceBuilder {
         &self,
         account_states: &mut BTreeMap<Address, AccountState>,
         post_value: bool,
+        ignore_loads: bool,
     ) {
         for node in self.nodes.iter() {
-            node.geth_update_account_storage(account_states, post_value);
+            node.geth_update_account_storage(account_states, post_value, ignore_loads);
         }
+    }
+
+    fn diff_traces(
+        &self,
+        pre: &BTreeMap<Address, AccountState>,
+        post: &BTreeMap<Address, AccountState>,
+    ) -> DiffMode {
+        let mut diff_mode = DiffMode::default();
+
+        // Geth removes created accounts from the pre state, and
+        // destroyed accounts from the post state. The below loops
+        // remove these accounts.
+        for (addr, pre_state) in pre.iter() {
+            let post_state = match post.get(addr) {
+                Some(state) => state.clone(),
+                None => AccountState::default()
+            };
+            if pre_state.change_type != ChangeType::Create && pre_state != &post_state {
+                diff_mode.pre.insert(*addr, pre_state.clone());
+            }
+        }
+
+        for (addr, post_state) in post.iter() {
+            let pre_state =  match pre.get(addr) {
+                Some(state) => state.clone(),
+                None => AccountState::default()
+            };
+            if post_state.change_type == ChangeType::Destroy || &pre_state == post_state {
+                continue;
+            }
+
+            // The post state should only contain the fields that have changed.
+            // To do this, we clone the post state and remove the fields that
+            // are the same as the pre state.
+            let mut post_clone = post_state.clone();
+            if pre_state.balance == post_state.balance {
+                post_clone.balance = None;
+            }
+
+            if pre_state.nonce == post_state.nonce {
+                post_clone.nonce = None;
+            }
+
+            if pre_state.code == post_state.code {
+                post_clone.code = None;
+            }
+
+            // Geth only includes storage keys that have changed in the post state.
+            // To do this, we clone the post state and remove the keys that are
+            // identical to the pre state.
+            if let Some(storage) = post_clone.storage.as_mut() {
+                let pre_storage = match pre_state.storage {
+                    Some(ref storage) => storage,
+                    None => continue
+                };
+
+                // Geth also removes zero values from the state, see https://github.com/ethereum/go-ethereum/blob/master/eth/tracers/native/prestate.go#L227
+                storage.retain(|k, v| {
+                    !v.is_zero() && match pre_storage.get(k) {
+                        Some(pre_value) => pre_value != v,
+                        None => true
+                    }
+                })
+            }
+
+            diff_mode.post.insert(*addr, post_clone);
+        }
+
+        diff_mode
     }
 }

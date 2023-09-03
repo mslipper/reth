@@ -1,7 +1,14 @@
 //! Types for representing call trace items.
 
-use crate::tracing::{config::TraceStyle, utils::convert_memory};
-use reth_primitives::{abi::decode_revert_reason, bytes::Bytes, Address, H256, U256};
+use std::collections::{btree_map::Entry, BTreeMap, VecDeque};
+
+use revm::interpreter::{
+    CallContext, CallScheme, CreateScheme, InstructionResult, Memory, opcode, OpCode, Stack,
+};
+use revm::interpreter::opcode::SSTORE;
+use serde::{Deserialize, Serialize};
+
+use reth_primitives::{abi::decode_revert_reason, Address, bytes::Bytes, H256, U256};
 use reth_rpc_types::trace::{
     geth::{AccountState, CallFrame, CallLogFrame, GethDefaultTracingOptions, StructLog},
     parity::{
@@ -9,11 +16,8 @@ use reth_rpc_types::trace::{
         CreateOutput, Delta, SelfdestructAction, StateDiff, TraceOutput, TransactionTrace,
     },
 };
-use revm::interpreter::{
-    opcode, CallContext, CallScheme, CreateScheme, InstructionResult, Memory, OpCode, Stack,
-};
-use serde::{Deserialize, Serialize};
-use std::collections::{btree_map::Entry, BTreeMap, VecDeque};
+
+use crate::tracing::{config::TraceStyle, utils::convert_memory};
 
 /// A unified representation of a call
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -508,14 +512,28 @@ impl CallTraceNode {
     /// * `account_states` - the account map updated in place.
     /// * `post_value` - if true, it adds storage values after trace transaction execution, if
     ///   false, returns the storage values before trace execution.
+    /// * `ignore_loads` - if true, it ignores SLOADs in the trace
     pub(crate) fn geth_update_account_storage(
         &self,
         account_states: &mut BTreeMap<Address, AccountState>,
         post_value: bool,
+        ignore_loads: bool,
     ) {
+        let changes: Vec<StorageChange> = self.trace.steps.iter()
+            .filter(|s| s.storage_change.is_some())
+            .filter(|s| if ignore_loads { s.op == OpCode::try_from_u8(SSTORE).unwrap() } else { true })
+            .map(|s| s.storage_change.unwrap())
+            .collect();
+
+        // If there are no storage changes in the trace, then we don't need
+        // to add any storage to the account state.
+        if changes.len() == 0 {
+            return
+        }
+
         let addr = self.trace.address;
         let acc_state = account_states.entry(addr).or_default();
-        for change in self.trace.steps.iter().filter_map(|s| s.storage_change) {
+        for change in changes {
             let StorageChange { key, value, had_value } = change;
             let storage_map = acc_state.storage.get_or_insert_with(BTreeMap::new);
             let value_to_insert = if post_value {
