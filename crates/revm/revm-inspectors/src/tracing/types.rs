@@ -531,7 +531,7 @@ impl CallTraceNode {
             return
         }
 
-        let addr = self.trace.address;
+        let addr = self.execution_address();
         let acc_state = account_states.entry(addr).or_default();
         for change in changes {
             let StorageChange { key, value, had_value } = change;
