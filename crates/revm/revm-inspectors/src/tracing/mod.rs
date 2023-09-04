@@ -339,11 +339,11 @@ impl TracingInspector {
                         data.journaled_state.state[address].storage[key].present_value();
                     let change = StorageChange { key: *key, value, had_value: *had_value };
                     println!("storage change: {:?} {:?} {:?} {:?} {:?}", address, key, value, had_value, pc);
+                    println!("step: {:#?}", step);
                     Some(change)
                 }
                 _ => None,
             };
-            println!("step: {:#?}", step);
         }
 
         // The gas cost is the difference between the recorded gas remaining at the start of the
