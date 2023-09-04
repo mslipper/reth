@@ -232,11 +232,10 @@ impl GethTraceBuilder {
 
                 // Contract code can come back as a zero-length byte array. This shouldn't
                 // show up in the state diff, so we filter it out below.
-
                 let pre_state = AccountState {
                     balance: Some(db_acc.balance),
                     nonce: Some(db_acc.nonce),
-                    code: match pre_code.unwrap_or_default() {
+                    code: match pre_code {
                         Some(code) => if code.len() > 0 {
                             Some(code)
                         } else {
