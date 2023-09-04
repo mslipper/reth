@@ -218,7 +218,7 @@ impl GethTraceBuilder {
 
                 // Geth always includes the contract code in the prestate. However,
                 // the code hash will be KECCAK_EMPTY if the account is an EOA. Therefore
-                // we need to filter it out
+                // we need to filter it out.
                 let pre_code = match db_code {
                     Some(code) => Some(Bytes::from(code.original_bytes())),
                     None => {
@@ -230,10 +230,20 @@ impl GethTraceBuilder {
                     }
                 };
 
+                // Contract code can come back as a zero-length byte array. This shouldn't
+                // show up in the state diff, so we filter it out below.
+
                 let pre_state = AccountState {
                     balance: Some(db_acc.balance),
                     nonce: Some(db_acc.nonce),
-                    code: pre_code,
+                    code: match pre_code.unwrap_or_default() {
+                        Some(code) => if code.len() > 0 {
+                            Some(code)
+                        } else {
+                            None
+                        },
+                        None => None,
+                    },
                     storage: None,
                     change_type: if db_acc.is_empty() {
                         ChangeType::Create
@@ -242,21 +252,17 @@ impl GethTraceBuilder {
                     },
                 };
 
-                // Contract code can come back as a zero-length byte array. This shouldn't
-                // show up in the state diff, so we filter it out here.
-                let post_code = match changed_acc.info.code {
-                    Some(ref code) => if code.len() > 0 {
-                        Some(Bytes::from(code.original_bytes()))
-                    } else {
-                        None
-                    },
-                    None => None,
-                };
-
                 let post_state = AccountState {
                     balance: Some(changed_acc.info.balance),
                     nonce: Some(changed_acc.info.nonce),
-                    code: post_code,
+                    code: match changed_acc.info.code {
+                        Some(ref code) => if code.len() > 0 {
+                            Some(Bytes::from(code.original_bytes()))
+                        } else {
+                            None
+                        },
+                        None => None,
+                    },
                     storage: None,
                     change_type: if changed_acc.is_destroyed {
                         ChangeType::Destroy
