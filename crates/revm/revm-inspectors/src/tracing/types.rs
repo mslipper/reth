@@ -512,16 +512,16 @@ impl CallTraceNode {
     /// * `account_states` - the account map updated in place.
     /// * `post_value` - if true, it adds storage values after trace transaction execution, if
     ///   false, returns the storage values before trace execution.
-    /// * `ignore_loads` - if true, it ignores SLOADs in the trace
+    /// * `ignore_sloads` - if true, it ignores SLOADs in the trace
     pub(crate) fn geth_update_account_storage(
         &self,
         account_states: &mut BTreeMap<Address, AccountState>,
         post_value: bool,
-        ignore_loads: bool,
+        ignore_sloads: bool,
     ) {
         let changes: Vec<StorageChange> = self.trace.steps.iter()
             .filter(|s| s.storage_change.is_some())
-            .filter(|s| if ignore_loads { s.op == OpCode::try_from_u8(SSTORE).unwrap() } else { true })
+            .filter(|s| if ignore_sloads { s.op == OpCode::try_from_u8(SSTORE).unwrap() } else { true })
             .map(|s| s.storage_change.unwrap())
             .collect();
 

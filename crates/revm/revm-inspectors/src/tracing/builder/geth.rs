@@ -284,10 +284,10 @@ impl GethTraceBuilder {
         &self,
         account_states: &mut BTreeMap<Address, AccountState>,
         post_value: bool,
-        ignore_loads: bool,
+        ignore_sloads: bool,
     ) {
         for node in self.nodes.iter() {
-            node.geth_update_account_storage(account_states, post_value, ignore_loads);
+            node.geth_update_account_storage(account_states, post_value, ignore_sloads);
         }
     }
 
@@ -349,14 +349,15 @@ impl GethTraceBuilder {
         out_diff
     }
 
-    /// Returns a copy of a with all elements contained within b removed.
+    /// Returns a copy of a with all elements contained within b removed. Also removes
+    /// all zero values in state.
     fn subtract_storage(
         &self,
         account: &mut AccountState,
         reference: &BTreeMap<H256, H256>,
     ) {
         let storage = account.storage.get_or_insert(BTreeMap::new());
-        storage.retain(|k, v| reference.get(k) != Some(v));
+        storage.retain(|k, v| reference.get(k) != Some(v) && !v.is_zero());
         if storage.is_empty() {
             account.storage = None;
         }
