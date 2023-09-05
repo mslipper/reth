@@ -296,18 +296,21 @@ impl GethTraceBuilder {
         pre: &BTreeMap<Address, AccountState>,
         post: &BTreeMap<Address, AccountState>,
     ) -> DiffMode {
-        let mut diff_mode = DiffMode::default();
+        let mut out_diff = DiffMode::default();
 
-        // Geth removes created accounts from the pre state, and
-        // destroyed accounts from the post state. The below loops
-        // remove these accounts.
         for (addr, pre_state) in pre.iter() {
             let post_state = match post.get(addr) {
                 Some(state) => state.clone(),
                 None => AccountState::default()
             };
+
+            let mut pre_clone = pre_state.clone();
+
+            // Don't put created accounts or accounts that are identical to the post
+            // state into the diff.
             if pre_state.change_type != ChangeType::Create && pre_state != &post_state {
-                diff_mode.pre.insert(*addr, pre_state.clone());
+                self.subtract_storage(&mut pre_clone, &mut post_state.storage.unwrap_or(BTreeMap::new()));
+                out_diff.pre.insert(*addr, pre_clone);
             }
         }
 
@@ -316,6 +319,9 @@ impl GethTraceBuilder {
                 Some(state) => state.clone(),
                 None => AccountState::default()
             };
+
+            // Don't put destroyed accounts or accounts that are identical to the pre-state
+            // into the diff.
             if post_state.change_type == ChangeType::Destroy || &pre_state == post_state {
                 continue;
             }
@@ -336,27 +342,23 @@ impl GethTraceBuilder {
                 post_clone.code = None;
             }
 
-            // Geth only includes storage keys that have changed in the post state.
-            // To do this, we clone the post state and remove the keys that are
-            // identical to the pre state.
-            if let Some(storage) = post_clone.storage.as_mut() {
-                let pre_storage = match pre_state.storage {
-                    Some(ref storage) => storage,
-                    None => continue
-                };
-
-                // Geth also removes zero values from the state, see https://github.com/ethereum/go-ethereum/blob/master/eth/tracers/native/prestate.go#L227
-                storage.retain(|k, v| {
-                    !v.is_zero() && match pre_storage.get(k) {
-                        Some(pre_value) => pre_value != v,
-                        None => true
-                    }
-                })
-            }
-
-            diff_mode.post.insert(*addr, post_clone);
+            self.subtract_storage(&mut post_clone, &mut pre_state.storage.unwrap_or(BTreeMap::new()));
+            out_diff.post.insert(*addr, post_clone);
         }
 
-        diff_mode
+        out_diff
+    }
+
+    /// Returns a copy of a with all elements contained within b removed.
+    fn subtract_storage(
+        &self,
+        account: &mut AccountState,
+        reference: &BTreeMap<H256, H256>,
+    ) {
+        let storage = account.storage.get_or_insert(BTreeMap::new());
+        storage.retain(|k, v| reference.get(k) != Some(v));
+        if storage.is_empty() {
+            account.storage = None;
+        }
     }
 }
