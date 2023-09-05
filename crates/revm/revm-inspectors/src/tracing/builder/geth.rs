@@ -356,6 +356,8 @@ impl GethTraceBuilder {
         account: &mut AccountState,
         reference: &BTreeMap<H256, H256>,
     ) {
+        println!("subtraction: {:#?} {:#?}", account, reference);
+
         let storage = account.storage.get_or_insert(BTreeMap::new());
         storage.retain(|k, v| reference.get(k) != Some(v) && !v.is_zero());
         if storage.is_empty() {
