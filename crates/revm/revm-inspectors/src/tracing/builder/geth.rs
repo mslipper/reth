@@ -309,7 +309,7 @@ impl GethTraceBuilder {
             // Don't put created accounts or accounts that are identical to the post
             // state into the diff.
             if pre_state.change_type != ChangeType::Create && pre_state != &post_state {
-                self.subtract_storage(&mut pre_clone, &mut post_state.storage.unwrap_or(BTreeMap::new()));
+                self.subtract_storage(addr, &mut pre_clone, &mut post_state.storage.unwrap_or(BTreeMap::new()));
                 out_diff.pre.insert(*addr, pre_clone);
             }
         }
@@ -342,7 +342,7 @@ impl GethTraceBuilder {
                 post_clone.code = None;
             }
 
-            self.subtract_storage(&mut post_clone, &mut pre_state.storage.unwrap_or(BTreeMap::new()));
+            self.subtract_storage(addr, &mut post_clone, &mut pre_state.storage.unwrap_or(BTreeMap::new()));
             out_diff.post.insert(*addr, post_clone);
         }
 
@@ -353,10 +353,11 @@ impl GethTraceBuilder {
     /// all zero values in state.
     fn subtract_storage(
         &self,
+        addr: &Address,
         account: &mut AccountState,
         reference: &BTreeMap<H256, H256>,
     ) {
-        println!("subtraction: {:#?} {:#?}", account, reference);
+        println!("subtraction: {:#?} {:#?} {:#?}", addr, account, reference);
 
         let storage = account.storage.get_or_insert(BTreeMap::new());
         storage.retain(|k, v| reference.get(k) != Some(v) && !v.is_zero());

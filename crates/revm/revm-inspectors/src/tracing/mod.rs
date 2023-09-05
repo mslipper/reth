@@ -338,6 +338,7 @@ impl TracingInspector {
                     let value =
                         data.journaled_state.state[address].storage[key].present_value();
                     let change = StorageChange { key: *key, value, had_value: *had_value };
+                    println!("storage change: {:#?} {:#?} {:#?}", address, change, step);
                     Some(change)
                 }
                 _ => None,
