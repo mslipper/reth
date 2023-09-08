@@ -2,8 +2,10 @@
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
-use revm::{db::DatabaseRef, primitives::ResultAndState};
-use revm::primitives::KECCAK_EMPTY;
+use revm::{
+    db::DatabaseRef,
+    primitives::{ResultAndState, KECCAK_EMPTY},
+};
 
 use reth_primitives::{Address, Bytes, H256, U256};
 use reth_rpc_types::trace::geth::{
@@ -12,8 +14,8 @@ use reth_rpc_types::trace::geth::{
 };
 
 use crate::tracing::{
-    TracingInspectorConfig,
     types::{CallTraceNode, CallTraceStepStackItem},
+    TracingInspectorConfig,
 };
 
 /// A type for creating geth style traces
@@ -189,8 +191,7 @@ impl GethTraceBuilder {
     where
         DB: DatabaseRef,
     {
-        let account_diffs: Vec<_> =
-            state.into_iter().map(|(addr, acc)| (*addr, acc)).collect();
+        let account_diffs: Vec<_> = state.into_iter().map(|(addr, acc)| (*addr, acc)).collect();
         let is_diff = prestate_config.is_diff_mode();
         if !is_diff {
             let mut prestate = PreStateMode::default();
@@ -207,7 +208,7 @@ impl GethTraceBuilder {
                     },
                 );
             }
-            self.update_storage_from_trace(&mut prestate.0, false, false);
+            self.update_storage_from_trace_prestate_mode(&mut prestate.0, false);
             Ok(PreStateFrame::Default(prestate))
         } else {
             let mut state_diff = DiffMode::default();
@@ -236,11 +237,13 @@ impl GethTraceBuilder {
                     balance: Some(db_acc.balance),
                     nonce: Some(db_acc.nonce),
                     code: match pre_code {
-                        Some(code) => if code.len() > 0 {
-                            Some(code)
-                        } else {
-                            None
-                        },
+                        Some(code) => {
+                            if code.len() > 0 {
+                                Some(code)
+                            } else {
+                                None
+                            }
+                        }
                         None => None,
                     },
                     storage: None,
@@ -255,11 +258,13 @@ impl GethTraceBuilder {
                     balance: Some(changed_acc.info.balance),
                     nonce: Some(changed_acc.info.nonce),
                     code: match changed_acc.info.code {
-                        Some(ref code) => if code.len() > 0 {
-                            Some(Bytes::from(code.original_bytes()))
-                        } else {
-                            None
-                        },
+                        Some(ref code) => {
+                            if code.len() > 0 {
+                                Some(Bytes::from(code.original_bytes()))
+                            } else {
+                                None
+                            }
+                        }
                         None => None,
                     },
                     storage: None,
@@ -270,24 +275,32 @@ impl GethTraceBuilder {
                     },
                 };
 
-
                 state_diff.post.insert(addr, post_state);
                 state_diff.pre.insert(addr, pre_state);
             }
-            self.update_storage_from_trace(&mut state_diff.pre, false, is_diff);
-            self.update_storage_from_trace(&mut state_diff.post, true, is_diff);
+            self.update_storage_from_trace_diff_mode(&mut state_diff.pre, false);
+            self.update_storage_from_trace_diff_mode(&mut state_diff.post, true);
             Ok(PreStateFrame::Diff(self.diff_traces(&state_diff.pre, &state_diff.post)))
         }
     }
 
-    fn update_storage_from_trace(
+    fn update_storage_from_trace_prestate_mode(
         &self,
         account_states: &mut BTreeMap<Address, AccountState>,
         post_value: bool,
-        ignore_sloads: bool,
     ) {
         for node in self.nodes.iter() {
-            node.geth_update_account_storage(account_states, post_value, ignore_sloads);
+            node.geth_update_account_storage(account_states, post_value);
+        }
+    }
+
+    fn update_storage_from_trace_diff_mode(
+        &self,
+        account_states: &mut BTreeMap<Address, AccountState>,
+        post_value: bool,
+    ) {
+        for node in self.nodes.iter() {
+            node.geth_update_account_storage_diff_mode(account_states, post_value);
         }
     }
 
@@ -301,7 +314,7 @@ impl GethTraceBuilder {
         for (addr, pre_state) in pre.iter() {
             let post_state = match post.get(addr) {
                 Some(state) => state.clone(),
-                None => AccountState::default()
+                None => AccountState::default(),
             };
 
             let mut pre_clone = pre_state.clone();
@@ -309,21 +322,25 @@ impl GethTraceBuilder {
             // Don't put created accounts or accounts that are identical to the post
             // state into the diff.
             if pre_state.change_type != ChangeType::Create && pre_state != &post_state {
-                self.subtract_storage(addr, &mut pre_clone, &mut post_state.storage.unwrap_or(BTreeMap::new()));
+                self.subtract_storage(
+                    addr,
+                    &mut pre_clone,
+                    &mut post_state.storage.unwrap_or(BTreeMap::new()),
+                );
                 out_diff.pre.insert(*addr, pre_clone);
             }
         }
 
         for (addr, post_state) in post.iter() {
-            let pre_state =  match pre.get(addr) {
+            let pre_state = match pre.get(addr) {
                 Some(state) => state.clone(),
-                None => AccountState::default()
+                None => AccountState::default(),
             };
 
             // Don't put destroyed accounts or accounts that are identical to the pre-state
             // into the diff.
             if post_state.change_type == ChangeType::Destroy || &pre_state == post_state {
-                continue;
+                continue
             }
 
             // The post state should only contain the fields that have changed.
@@ -342,7 +359,11 @@ impl GethTraceBuilder {
                 post_clone.code = None;
             }
 
-            self.subtract_storage(addr, &mut post_clone, &mut pre_state.storage.unwrap_or(BTreeMap::new()));
+            self.subtract_storage(
+                addr,
+                &mut post_clone,
+                &mut pre_state.storage.unwrap_or(BTreeMap::new()),
+            );
             out_diff.post.insert(*addr, post_clone);
         }
 

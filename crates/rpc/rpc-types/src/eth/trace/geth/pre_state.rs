@@ -38,10 +38,7 @@ pub struct AccountState {
     pub balance: Option<U256>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code: Option<Bytes>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nonce: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub storage: Option<BTreeMap<H256, H256>>,
