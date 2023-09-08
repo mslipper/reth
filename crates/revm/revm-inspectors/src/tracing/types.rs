@@ -553,13 +553,7 @@ impl CallTraceNode {
                 if initial_value.is_none() {
                     initial_value = match change.reason {
                         StorageChangeReason::SSTORE => match change.had_value {
-                            Some(had_value) => {
-                                if change.value == had_value {
-                                    None
-                                } else {
-                                    Some(had_value)
-                                }
-                            }
+                            Some(had_value) => Some(had_value),
                             None => Some(U256::default()),
                         },
                         StorageChangeReason::SLOAD => Some(change.value),
@@ -571,6 +565,9 @@ impl CallTraceNode {
                 }
             }
 
+            let addr = self.execution_address();
+            println!("{:?}:{:?}: {:#?} -> {:#?}", addr,  slot, initial_value, final_value);
+
             if final_value.is_none() || initial_value.is_none() {
                 continue
             }
@@ -579,7 +576,6 @@ impl CallTraceNode {
                 continue
             }
 
-            let addr = self.execution_address();
             let value_to_write =
                 if post_value { final_value.unwrap() } else { initial_value.unwrap() };
 
