@@ -511,7 +511,6 @@ impl CallTraceNode {
     /// * `account_states` - the account map updated in place.
     /// * `post_value` - if true, it adds storage values after trace transaction execution, if
     ///   false, returns the storage values before trace execution.
-    /// * `ignore_sloads` - if true, it ignores SLOADs in the trace
     pub(crate) fn geth_update_account_storage(
         &self,
         account_states: &mut BTreeMap<Address, AccountState>,
@@ -567,10 +566,9 @@ impl CallTraceNode {
                     };
                 }
 
-                final_value = match change.reason {
-                    StorageChangeReason::SSTORE => Some(change.value),
-                    StorageChangeReason::SLOAD => None,
-                };
+                if change.reason == StorageChangeReason::SSTORE {
+                    final_value = Some(change.value);
+                }
             }
 
             if final_value.is_none() || initial_value.is_none() {
