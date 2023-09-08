@@ -342,7 +342,6 @@ impl TracingInspector {
                         _ => unreachable!(),
                     };
                     let change = StorageChange { key: *key, value, had_value: *had_value, reason };
-                    println!("storage change: {:#?} {:#?} {:#?}", address, change, step);
                     Some(change)
                 }
                 _ => None,

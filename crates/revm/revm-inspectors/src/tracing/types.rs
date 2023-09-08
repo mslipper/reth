@@ -575,8 +575,6 @@ impl CallTraceNode {
                 }
             }
 
-            println!("{:?}:{:?}: {:#?} -> {:#?}", addr,  slot, initial_value, final_value);
-
             if final_value.is_none() || initial_value.is_none() {
                 continue
             }

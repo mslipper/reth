@@ -220,16 +220,15 @@ impl GethTraceBuilder {
                 // Geth always includes the contract code in the prestate. However,
                 // the code hash will be KECCAK_EMPTY if the account is an EOA. Therefore
                 // we need to filter it out.
-                let pre_code = match db_code {
-                    Some(code) => Some(Bytes::from(code.original_bytes())),
-                    None => {
-                        if db_code_hash == KECCAK_EMPTY {
-                            None
-                        } else {
-                            Some(Bytes::from(db.code_by_hash(db_code_hash)?.original_bytes()))
-                        }
+                let pre_code = db_code.map(|code| Bytes::from(code.original_bytes())).or_else(|| {
+                    if db_code_hash == KECCAK_EMPTY {
+                        None
+                    } else {
+                        db.code_by_hash(db_code_hash)
+                            .ok()
+                            .map(|code| Bytes::from(code.original_bytes()))
                     }
-                };
+                });
 
                 // Contract code can come back as a zero-length byte array. This shouldn't
                 // show up in the state diff, so we filter it out below.
@@ -312,30 +311,17 @@ impl GethTraceBuilder {
         let mut out_diff = DiffMode::default();
 
         for (addr, pre_state) in pre.iter() {
-            let post_state = match post.get(addr) {
-                Some(state) => state.clone(),
-                None => AccountState::default(),
-            };
-
-            let mut pre_clone = pre_state.clone();
+            let post_state = post.get(addr).cloned().unwrap_or_default();
 
             // Don't put created accounts or accounts that are identical to the post
             // state into the diff.
             if pre_state.change_type != ChangeType::Create && pre_state != &post_state {
-                self.subtract_storage(
-                    addr,
-                    &mut pre_clone,
-                    &mut post_state.storage.unwrap_or(BTreeMap::new()),
-                );
-                out_diff.pre.insert(*addr, pre_clone);
+                out_diff.pre.insert(*addr, pre_state.clone());
             }
         }
 
         for (addr, post_state) in post.iter() {
-            let pre_state = match pre.get(addr) {
-                Some(state) => state.clone(),
-                None => AccountState::default(),
-            };
+            let pre_state = pre.get(addr).cloned().unwrap_or_default();
 
             // Don't put destroyed accounts or accounts that are identical to the pre-state
             // into the diff.
@@ -359,31 +345,9 @@ impl GethTraceBuilder {
                 post_clone.code = None;
             }
 
-            self.subtract_storage(
-                addr,
-                &mut post_clone,
-                &mut pre_state.storage.unwrap_or(BTreeMap::new()),
-            );
             out_diff.post.insert(*addr, post_clone);
         }
 
         out_diff
-    }
-
-    /// Returns a copy of a with all elements contained within b removed. Also removes
-    /// all zero values in state.
-    fn subtract_storage(
-        &self,
-        addr: &Address,
-        account: &mut AccountState,
-        reference: &BTreeMap<H256, H256>,
-    ) {
-        println!("subtraction: {:#?} {:#?} {:#?}", addr, account, reference);
-
-        let storage = account.storage.get_or_insert(BTreeMap::new());
-        storage.retain(|k, v| reference.get(k) != Some(v) && !v.is_zero());
-        if storage.is_empty() {
-            account.storage = None;
-        }
     }
 }
