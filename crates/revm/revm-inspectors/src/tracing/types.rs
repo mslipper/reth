@@ -545,8 +545,18 @@ impl CallTraceNode {
             changed_slots.entry(change.key).or_default().push(change);
         }
 
+        let addr = self.execution_address();
         for (slot, changes) in changed_slots {
-            let mut initial_value: Option<U256> = None;
+            let mut initial_value: Option<U256> = account_states.entry(addr)
+                .or_default()
+                .storage
+                .clone()
+                .unwrap_or_else(BTreeMap::new)
+                .get(&H256::from(slot))
+                .map(|v| {
+                    let conv: U256 = v.clone().into();
+                    conv
+                });
             let mut final_value: Option<U256> = None;
 
             for change in changes {
@@ -565,7 +575,6 @@ impl CallTraceNode {
                 }
             }
 
-            let addr = self.execution_address();
             println!("{:?}:{:?}: {:#?} -> {:#?}", addr,  slot, initial_value, final_value);
 
             if final_value.is_none() || initial_value.is_none() {
