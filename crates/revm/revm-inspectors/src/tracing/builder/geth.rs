@@ -316,7 +316,7 @@ impl GethTraceBuilder {
             // Don't put created accounts or accounts that are identical to the post
             // state into the diff.
             if pre_state.change_type != ChangeType::Create && pre_state != &post_state {
-                let mut pre_clone = post_state.clone();
+                let mut pre_clone = pre_state.clone();
                 pre_clone.storage.get_or_insert_with(BTreeMap::new).retain(|_, v| !v.is_zero());
                 pre_clone.storage = match pre_clone.storage.as_ref().unwrap().len() {
                     0 => None,
